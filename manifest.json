@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "StudyLM - Notes for ChatGPT",
+  "version": "0.1.0",
+  "description": "Select text in a ChatGPT answer, attach a question or note, and get a short AI answer pinned inline. Study notes for LLM chats.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": [
+        "src/adapter-chatgpt.js",
+        "src/store.js",
+        "src/highlights.js",
+        "src/content.js"
+      ],
+      "css": ["src/styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
