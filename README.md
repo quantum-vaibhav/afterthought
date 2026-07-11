@@ -1,4 +1,4 @@
-# StudyLM — Notes for ChatGPT
+# AfterThought— Notes for ChatGPT
 
 Chrome extension: select any text in a ChatGPT answer, attach a question or note, and optionally get a short AI answer pinned inline — without polluting your main conversation.
 
