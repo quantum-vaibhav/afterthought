@@ -274,6 +274,14 @@
     const input = popupEl.querySelector(".slm-input");
     input.focus();
 
+    // Enter = Ask AI & save · Shift+Enter = newline
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        popupEl.querySelector(".slm-ask").click();
+      }
+    });
+
     popupEl.querySelectorAll(".slm-chip").forEach((c) => {
       c.onclick = () => {
         noteType = c.dataset.type;
@@ -539,6 +547,14 @@
           box.hidden = !box.hidden;
           box.querySelector("input")?.focus();
         };
+      const fuInput = card.querySelector(".slm-fu-box input");
+      if (fuInput)
+        fuInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            card.querySelector(".slm-fu-send")?.click();
+          }
+        });
       const fuSend = card.querySelector(".slm-fu-send");
       if (fuSend)
         fuSend.onclick = async () => {
