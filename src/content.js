@@ -118,6 +118,7 @@
   let quizEl = null;
   let pendingSel = null; // {text, messageId, fullText}
   const liveAsks = {}; // requestId -> noteId
+  const openFollowups = new Set(); // noteIds whose follow-up box stays expanded
 
   const cid = () => A.getConversationId();
   const title = () =>
@@ -332,18 +333,30 @@
   }
 
   function buildFollowupPrompt(note, q) {
-    return (
-      "You are helping a student with a follow-up on their study note. " +
-      "Answer briefly (2-4 sentences max), no preamble.\n\n" +
+    // Linear thread: the LLM gets the whole conversation so a follow-up on a
+    // follow-up still has full context. Later turns build on earlier answers.
+    let ctx =
+      "You are helping a student with follow-up questions on their study note. " +
+      "Answer ONLY the latest follow-up, briefly (2-4 sentences max), no preamble. " +
+      "The conversation below is context — later questions build on earlier answers.\n\n" +
       "--- ORIGINAL HIGHLIGHT ---\n" +
       note.selection.slice(0, 1500) +
-      "\n\n--- PREVIOUS Q ---\n" +
+      "\n\n--- ORIGINAL QUESTION ---\n" +
       note.question +
-      "\n\n--- PREVIOUS A ---\n" +
-      (note.answer || "") +
-      "\n\n--- FOLLOW-UP QUESTION ---\n" +
-      q
+      "\n\n--- ORIGINAL ANSWER ---\n" +
+      (note.answer || "").slice(0, 2000);
+    const priors = (note.followups || []).filter(
+      (f) => f.a && f.a !== "⏳ waiting…"
     );
+    priors.forEach((f, i) => {
+      ctx +=
+        `\n\n--- FOLLOW-UP ${i + 1} QUESTION ---\n` +
+        f.q +
+        `\n--- FOLLOW-UP ${i + 1} ANSWER ---\n` +
+        (f.a || "").slice(0, 1500);
+    });
+    ctx += "\n\n--- NEW FOLLOW-UP QUESTION ---\n" + q;
+    return ctx;
   }
 
   function askAI(note, prompt, streamTarget, followupQ) {
@@ -523,6 +536,7 @@
       const noteId = card.dataset.id;
       const convoId = card.dataset.cid;
       card.querySelector(".slm-del").onclick = async () => {
+        openFollowups.delete(noteId);
         await Store.remove(convoId, noteId);
         toast("Note deleted");
         renderList();
@@ -542,10 +556,14 @@
         };
       const fu = card.querySelector(".slm-fu");
       if (fu)
-        fu.onclick = async () => {
+        fu.onclick = () => {
           const box = card.querySelector(".slm-fu-box");
           box.hidden = !box.hidden;
-          box.querySelector("input")?.focus();
+          if (box.hidden) openFollowups.delete(noteId);
+          else {
+            openFollowups.add(noteId);
+            box.querySelector("input")?.focus();
+          }
         };
       const fuInput = card.querySelector(".slm-fu-box input");
       if (fuInput)
@@ -561,6 +579,7 @@
           const inp = card.querySelector(".slm-fu-box input");
           const q = inp.value.trim();
           if (!q) return;
+          openFollowups.add(noteId); // stay open so the thread can continue
           const notes = await Store.getNotes(convoId);
           const n = notes.find((x) => x.id === noteId);
           await Store.update(convoId, noteId, {
@@ -622,8 +641,8 @@
               `<div class="slm-followup"><b>↳ ${esc(f.q)}</b><div>${esc(f.a || "")}</div></div>`
           )
           .join("")}
-        <div class="slm-fu-box" hidden>
-          <input placeholder="Follow-up question…">
+        <div class="slm-fu-box"${openFollowups.has(n.id) ? "" : " hidden"}>
+          <input placeholder="Ask a follow-up… (builds on the whole thread)">
           <button class="slm-btn slm-primary slm-fu-send">Ask</button>
         </div>
       </div>`;
