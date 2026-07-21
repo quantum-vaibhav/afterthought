@@ -346,6 +346,46 @@
     );
   }
 
+  // Locate a follow-up node by its index path ("0", "0.2", "0.2.1", …).
+  function getNodeByPath(note, pathStr) {
+    let nodes = note.followups || [];
+    let node = null;
+    for (const i of pathStr.split(".").map(Number)) {
+      node = nodes[i];
+      if (!node) return null;
+      nodes = node.children || [];
+    }
+    return node;
+  }
+
+  // Reply to any follow-up (recursive depth). Context = last 2 Q&A turns on the
+  // path (nearest ancestor + the node itself) to keep prompts small at any depth.
+  function buildSubFollowupPrompt(note, pathStr, q) {
+    const turns = [{ q: note.question, a: note.answer || "" }];
+    let nodes = note.followups || [];
+    for (const i of pathStr.split(".").map(Number)) {
+      const node = nodes[i];
+      if (!node) break;
+      turns.push({ q: node.q, a: node.a || "" });
+      nodes = node.children || [];
+    }
+    const last2 = turns.slice(-2);
+    let ctx =
+      "You are helping a student with a follow-up on their study note. " +
+      "Answer briefly (2-4 sentences max), no preamble.\n\n" +
+      "--- ORIGINAL HIGHLIGHT ---\n" +
+      note.selection.slice(0, 1500);
+    last2.forEach((t, i) => {
+      ctx +=
+        `\n\n--- PREVIOUS Q${i + 1} ---\n` +
+        t.q +
+        `\n--- PREVIOUS A${i + 1} ---\n` +
+        (t.a || "").slice(0, 1500);
+    });
+    ctx += "\n\n--- FOLLOW-UP QUESTION ---\n" + q;
+    return ctx;
+  }
+
   function askAI(note, prompt, streamTarget, followupQ) {
     const requestId = "r" + Date.now() + Math.random().toString(36).slice(2, 6);
     liveAsks[requestId] = note.id;
@@ -588,6 +628,59 @@
               renderList();
             });
         };
+
+      // recursive: a reply button on every follow-up answer, any depth
+      card.querySelectorAll(".slm-followup").forEach((fuEl) => {
+        const path = fuEl.dataset.path;
+        const sfu = fuEl.querySelector(":scope > .slm-fu-line > .slm-sfu");
+        const box = fuEl.querySelector(":scope > .slm-sfu-box");
+        if (!sfu || !box) return;
+        const inp = box.querySelector("input");
+        sfu.onclick = () => {
+          box.hidden = !box.hidden;
+          if (!box.hidden) inp.focus();
+        };
+        inp.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            box.querySelector(".slm-sfu-send").click();
+          }
+        });
+        box.querySelector(".slm-sfu-send").onclick = async () => {
+          const q = inp.value.trim();
+          if (!q) return;
+          const notes = await Store.getNotes(convoId);
+          const n = notes.find((x) => x.id === noteId);
+          const node = getNodeByPath(n, path);
+          if (!node) return;
+          node.children = node.children || [];
+          node.children.push({ q, a: "⏳ waiting…", at: Date.now() });
+          await Store.update(convoId, noteId, { followups: n.followups });
+          renderList();
+          const requestId = "r" + Date.now();
+          chrome.runtime
+            .sendMessage({
+              type: "ASK",
+              requestId,
+              prompt: buildSubFollowupPrompt(n, path, q),
+            })
+            .then(async (resp) => {
+              const notes2 = await Store.getNotes(convoId);
+              const n2 = notes2.find((x) => x.id === noteId);
+              const node2 = getNodeByPath(n2, path);
+              const c = node2?.children?.find(
+                (c) => c.q === q && c.a === "⏳ waiting…"
+              );
+              if (c)
+                c.a = resp?.ok
+                  ? resp.answer
+                  : "⚠️ Failed: " + (resp?.error || "no response");
+              await Store.update(convoId, noteId, { followups: n2.followups });
+              toast(resp?.ok ? "Follow-up answered ✓" : "Ask failed ⚠️");
+              renderList();
+            });
+        };
+      });
     });
 
     if (focusNoteId) {
@@ -598,6 +691,32 @@
         setTimeout(() => target.classList.remove("slm-flash"), 1600);
       }
     }
+  }
+
+  // Recursively render follow-ups. Children are wrapped in .slm-kids so each
+  // node's own controls stay reachable via ":scope >" (no descendant clashes).
+  function followupTree(nodes, basePath) {
+    return (nodes || [])
+      .map((f, i) => {
+        const path = basePath ? basePath + "." + i : String(i);
+        const kids =
+          f.children && f.children.length
+            ? `<div class="slm-kids">${followupTree(f.children, path)}</div>`
+            : "";
+        return `
+        <div class="slm-followup" data-path="${path}">
+          <div class="slm-fu-line"><b>↳ ${esc(f.q)}</b>
+            <button class="slm-mini slm-sfu" title="Ask a follow-up on this answer">${I.reply}</button>
+          </div>
+          <div>${esc(f.a || "")}</div>
+          ${kids}
+          <div class="slm-sfu-box" hidden>
+            <input placeholder="Follow-up on this answer…">
+            <button class="slm-btn slm-primary slm-sfu-send">Ask</button>
+          </div>
+        </div>`;
+      })
+      .join("");
   }
 
   function noteCard(n, convoId) {
@@ -616,12 +735,7 @@
         <blockquote class="slm-quote">${esc(smartTrim(n.selection, 180))}</blockquote>
         <div class="slm-q">Q: ${esc(n.question)}</div>
         ${n.answer ? `<div class="slm-a">${esc(n.answer)}</div>` : ""}
-        ${n.followups
-          .map(
-            (f) =>
-              `<div class="slm-followup"><b>↳ ${esc(f.q)}</b><div>${esc(f.a || "")}</div></div>`
-          )
-          .join("")}
+        ${followupTree(n.followups, "")}
         <div class="slm-fu-box" hidden>
           <input placeholder="Follow-up question…">
           <button class="slm-btn slm-primary slm-fu-send">Ask</button>
