@@ -171,8 +171,32 @@
       text,
       messageId: A.getMessageId(msgEl),
       fullText: A.getMessageText(msgEl),
+      occurrence: occurrenceIndex(msgEl, sel.getRangeAt(0), text),
       rect: sel.getRangeAt(0).getBoundingClientRect(),
     };
+  }
+
+  // Which repeat of `needle` this selection is (0-based), so a phrase that
+  // appears more than once in a message highlights the right spot. Best-effort:
+  // any failure returns 0, i.e. the existing first-match behavior.
+  function occurrenceIndex(msgEl, range, needle) {
+    try {
+      const pre = document.createRange();
+      pre.selectNodeContents(msgEl);
+      pre.setEnd(range.startContainer, range.startOffset);
+      const before = pre.toString().replace(/\s+/g, " ");
+      const n = needle.replace(/\s+/g, " ").trim();
+      if (!n) return 0;
+      let count = 0,
+        i = before.indexOf(n);
+      while (i !== -1) {
+        count++;
+        i = before.indexOf(n, i + 1);
+      }
+      return count;
+    } catch (_) {
+      return 0;
+    }
   }
 
   document.addEventListener("mouseup", (e) => {
@@ -548,7 +572,7 @@
     // sidebar answer element, if visible
     if (noteId) {
       document
-        .querySelectorAll(`.slm-note[data-id="${noteId}"] .slm-a`)
+        .querySelectorAll(`.slm-note[data-id="${CSS.escape(noteId)}"] .slm-a`)
         .forEach((n) => (n.textContent = msg.text));
     }
   });
@@ -558,6 +582,7 @@
       id: "n" + Date.now() + Math.random().toString(36).slice(2, 7),
       messageId: s.messageId,
       selection: s.text,
+      occurrence: s.occurrence || 0,
       question,
       answer,
       type: type || "general",
@@ -565,7 +590,12 @@
       srs: { reps: 0, intervalDays: 0, due: null },
       createdAt: new Date().toISOString(),
     };
-    await Store.add(cid(), title(), note);
+    try {
+      await Store.add(cid(), title(), note);
+    } catch (e) {
+      toast("Couldn't save note — storage may be full ⚠️");
+      throw e;
+    }
     refresh();
     return note;
   }
@@ -822,7 +852,9 @@
     });
 
     if (focusNoteId) {
-      const target = list.querySelector(`.slm-note[data-id="${focusNoteId}"]`);
+      const target = list.querySelector(
+        `.slm-note[data-id="${CSS.escape(focusNoteId)}"]`
+      );
       if (target) {
         target.scrollIntoView({ block: "center" });
         target.classList.add("slm-flash");
@@ -865,7 +897,7 @@
   function noteCard(n, convoId) {
     const t = TYPES[n.type] || TYPES.general;
     return `
-      <div class="slm-note" data-id="${n.id}" data-cid="${esc(convoId)}"
+      <div class="slm-note" data-id="${esc(n.id)}" data-cid="${esc(convoId)}"
            style="--note-color:${t.color}">
         <div class="slm-note-top">
           <span class="slm-type" style="--chip:${t.color}"><i class="slm-dot"></i>${t.label}</span>
@@ -1043,9 +1075,10 @@
     return e;
   }
   function esc(s) {
+    // escapes & < > AND quotes, so it's safe in both text and attribute contexts
     const d = document.createElement("div");
     d.textContent = s || "";
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   refresh();

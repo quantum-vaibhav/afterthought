@@ -73,9 +73,16 @@
       return null;
     },
 
-    // Stable id for a message so notes survive re-renders. Falls back to index.
+    // Stable id for a message so notes survive re-renders. Positional index is a
+    // last resort — it shifts when messages are edited/regenerated, mis-mapping
+    // notes — so look on the element, an ancestor, then a descendant first.
     getMessageId(messageEl) {
-      const explicit = messageEl.getAttribute("data-message-id");
+      const explicit =
+        messageEl.getAttribute("data-message-id") ||
+        messageEl.closest("[data-message-id]")?.getAttribute("data-message-id") ||
+        messageEl
+          .querySelector("[data-message-id]")
+          ?.getAttribute("data-message-id");
       if (explicit) return explicit;
       const all = this.getAssistantMessages();
       return "idx-" + all.indexOf(messageEl);

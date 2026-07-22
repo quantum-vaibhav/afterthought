@@ -17,7 +17,9 @@
   }
 
   // Find `needle` inside root's text nodes (whitespace-normalized), return a Range.
-  function findRange(root, needle) {
+  // `occurrence` (0-based) picks which repeat to match; falls back to the last
+  // found match if there aren't that many, so it never fails worse than before.
+  function findRange(root, needle, occurrence = 0) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const nodes = [];
     let full = "";
@@ -46,7 +48,12 @@
     }
     const needleN = needle.replace(/\s+/g, " ").trim();
     if (!needleN) return null;
-    const idx = out.indexOf(needleN);
+    let idx = out.indexOf(needleN);
+    for (let k = 0; k < occurrence && idx !== -1; k++) {
+      const next = out.indexOf(needleN, idx + 1);
+      if (next === -1) break; // fewer matches than expected → keep last found
+      idx = next;
+    }
     if (idx < 0) return null;
 
     const rawStart = map[idx];
@@ -83,7 +90,7 @@
       hitList = [];
       for (const { note, messageEl } of entries) {
         if (!messageEl) continue;
-        const range = findRange(messageEl, note.selection);
+        const range = findRange(messageEl, note.selection, note.occurrence || 0);
         if (!range) continue;
         registryFor(note.type || "general").add(range);
         hitList.push({ range, noteId: note.id });
