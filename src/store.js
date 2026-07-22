@@ -50,6 +50,18 @@
     await chrome.storage.local.set({ [KEY]: data });
   }
 
+  // Run mutations one at a time so two concurrent load→modify→save cycles can't
+  // clobber each other (last-writer-wins data loss).
+  let writeChain = Promise.resolve();
+  function serialize(fn) {
+    const run = writeChain.then(fn, fn);
+    writeChain = run.then(
+      () => {},
+      () => {}
+    );
+    return run;
+  }
+
   window.StudyLMStore = {
     TYPES,
 
@@ -63,35 +75,41 @@
     },
 
     async add(cid, title, note) {
-      const all = await loadAll();
-      all[cid] = all[cid] || { title: "", notes: [] };
-      if (title) all[cid].title = title;
-      all[cid].notes.push(normNote(note));
-      await saveAll(all);
-      return note;
+      return serialize(async () => {
+        const all = await loadAll();
+        all[cid] = all[cid] || { title: "", notes: [] };
+        if (title) all[cid].title = title;
+        all[cid].notes.push(normNote(note));
+        await saveAll(all);
+        return note;
+      });
     },
 
     async update(cid, noteId, patch) {
-      const all = await loadAll();
-      const n = (all[cid]?.notes || []).find((n) => n.id === noteId);
-      if (n) {
-        if (patch.followupAdd) {
-          n.followups.push(patch.followupAdd);
-          delete patch.followupAdd;
+      return serialize(async () => {
+        const all = await loadAll();
+        const n = (all[cid]?.notes || []).find((n) => n.id === noteId);
+        if (n) {
+          if (patch.followupAdd) {
+            n.followups.push(patch.followupAdd);
+            delete patch.followupAdd;
+          }
+          Object.assign(n, patch);
+          await saveAll(all);
         }
-        Object.assign(n, patch);
-        await saveAll(all);
-      }
-      return n;
+        return n;
+      });
     },
 
     async remove(cid, noteId) {
-      const all = await loadAll();
-      if (all[cid]) {
-        all[cid].notes = all[cid].notes.filter((n) => n.id !== noteId);
-        if (!all[cid].notes.length) delete all[cid];
-        await saveAll(all);
-      }
+      return serialize(async () => {
+        const all = await loadAll();
+        if (all[cid]) {
+          all[cid].notes = all[cid].notes.filter((n) => n.id !== noteId);
+          if (!all[cid].notes.length) delete all[cid];
+          await saveAll(all);
+        }
+      });
     },
 
     // ---- spaced repetition (SM-2 lite) ----
@@ -166,22 +184,24 @@
     },
 
     async importJSON(text) {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(text); // parse (may throw) outside the lock
       const incoming = parsed.data || parsed; // accept raw dumps too
-      const all = await loadAll();
-      let count = 0;
-      for (const [cid, convo] of Object.entries(incoming)) {
-        all[cid] = all[cid] || { title: convo.title || "", notes: [] };
-        const have = new Set(all[cid].notes.map((n) => n.id));
-        for (const n of convo.notes || []) {
-          if (!have.has(n.id)) {
-            all[cid].notes.push(normNote(n));
-            count++;
+      return serialize(async () => {
+        const all = await loadAll();
+        let count = 0;
+        for (const [cid, convo] of Object.entries(incoming)) {
+          all[cid] = all[cid] || { title: convo.title || "", notes: [] };
+          const have = new Set(all[cid].notes.map((n) => n.id));
+          for (const n of convo.notes || []) {
+            if (!have.has(n.id)) {
+              all[cid].notes.push(normNote(n));
+              count++;
+            }
           }
         }
-      }
-      await saveAll(all);
-      return count;
+        await saveAll(all);
+        return count;
+      });
     },
 
     download(filename, text, mime = "text/plain") {
