@@ -301,10 +301,12 @@
     popupEl.querySelector(".slm-ask").onclick = async () => {
       const question = input.value.trim();
       if (!question) return setStatus("Type a question first.");
-      setStatus("Asking in a background temporary chat…");
-      popupEl.querySelector(".slm-ask").disabled = true;
       const note = await createNote(s, question, "⏳ waiting for answer…", noteType);
-      askAI(note, buildPrompt(s, question), popupEl.querySelector(".slm-stream"));
+      // Open the sidebar on this note so the answer streams in live — same
+      // seamless flow as follow-ups, instead of leaving it hidden behind a badge.
+      closePopup();
+      await openSidebar(note.id);
+      askAI(note, buildPrompt(s, question));
     };
 
     function setStatus(t) {
@@ -514,11 +516,13 @@
         delete liveAsks[requestId];
         closePopup();
         refresh();
+        renderList(); // show the final answer in the sidebar (no-op if closed)
       })
       .catch(async (err) => {
         await Store.update(cid(), note.id, { answer: "⚠️ Failed: " + err });
         delete liveAsks[requestId];
         refresh();
+        renderList();
       });
     if (streamTarget) streamTarget.dataset.slmStream = requestId;
   }
@@ -994,12 +998,17 @@
     }, 800);
   }).observe(document.body, { childList: true, subtree: true });
 
-  let lastUrl = location.href;
+  // Watch the CONVERSATION (path), not the full URL. ChatGPT mutates the query
+  // string / hash during an ask — reacting to those was closing the sidebar on
+  // the first question. Only act on a real conversation change, and when it does
+  // change, re-render the sidebar in place instead of closing it.
+  let lastCid = cid();
   setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      closeSidebar();
+    const now = cid();
+    if (now !== lastCid) {
+      lastCid = now;
       refresh();
+      if (sidebarEl) renderList();
     }
   }, 1000);
 
