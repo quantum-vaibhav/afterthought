@@ -994,12 +994,17 @@
     }, 800);
   }).observe(document.body, { childList: true, subtree: true });
 
-  let lastUrl = location.href;
+  // Watch the CONVERSATION (path), not the full URL. ChatGPT mutates the query
+  // string / hash during an ask — reacting to those was closing the sidebar on
+  // the first question. Only act on a real conversation change, and when it does
+  // change, re-render the sidebar in place instead of closing it.
+  let lastCid = cid();
   setInterval(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      closeSidebar();
+    const now = cid();
+    if (now !== lastCid) {
+      lastCid = now;
       refresh();
+      if (sidebarEl) renderList();
     }
   }, 1000);
 
