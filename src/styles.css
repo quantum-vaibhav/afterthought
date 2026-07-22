@@ -99,6 +99,11 @@ kbd {
   from { transform: translateX(48px); opacity: 0; }
   to   { transform: none; opacity: 1; }
 }
+.slm-slide-out { animation: slm-slide-out 0.2s cubic-bezier(0.4, 0, 1, 1) forwards; }
+@keyframes slm-slide-out {
+  from { transform: none; opacity: 1; }
+  to   { transform: translateX(100%); opacity: 0; }
+}
 
 /* ---------- floating "Add note" pill ---------- */
 
