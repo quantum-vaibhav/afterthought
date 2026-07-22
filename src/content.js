@@ -204,12 +204,22 @@
     }
   });
 
-  // click on a highlight -> open its note
+  // click on a highlight -> open its note; click anywhere else -> close sidebar
   document.addEventListener("click", (e) => {
-    if (e.target.closest(".slm-popup, .slm-sidebar, .slm-quiz, .slm-fab, .slm-float"))
+    // ignore clicks on our own UI (these have their own handlers)
+    if (
+      e.target.closest(
+        ".slm-popup, .slm-sidebar, .slm-quiz, .slm-fab, .slm-float, .slm-toasts, .slm-badge"
+      )
+    )
       return;
     const noteId = HL?.hitTest(e.clientX, e.clientY);
-    if (noteId) openSidebar(noteId);
+    if (noteId) {
+      openSidebar(noteId);
+      return;
+    }
+    // clicked outside the sidebar and not on a highlight → dismiss it
+    if (sidebarEl) closeSidebar();
   });
 
   function showFloat(rect) {
@@ -577,7 +587,8 @@
   let sbState = { scope: "chat", q: "", type: "all" };
 
   async function openSidebar(focusNoteId) {
-    closeSidebar();
+    // remove any panel instantly (incl. one mid slide-out) before rebuilding
+    document.querySelectorAll(".slm-sidebar").forEach((e) => e.remove());
     sidebarEl = el("div", "slm-sidebar slm-slide-in");
     sidebarEl.innerHTML = `
       <div class="slm-sb-head">
@@ -638,8 +649,19 @@
   }
 
   function closeSidebar() {
-    sidebarEl?.remove();
-    sidebarEl = null;
+    const panel = sidebarEl;
+    sidebarEl = null; // mark closed immediately (guards re-entrancy / toggles)
+    if (!panel) return;
+    panel.classList.remove("slm-slide-in");
+    panel.classList.add("slm-slide-out");
+    let removed = false;
+    const finish = () => {
+      if (removed) return;
+      removed = true;
+      panel.remove();
+    };
+    panel.addEventListener("animationend", finish, { once: true });
+    setTimeout(finish, 300); // fallback if animationend doesn't fire
   }
 
   async function renderList(focusNoteId) {
