@@ -108,6 +108,7 @@
     trash: _svg('<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>', 14),
     close: _svg('<path d="M18 6 6 18M6 6l12 12"/>', 14),
     grad: _svg('<path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"/>', 14),
+    retry: _svg('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>', 13),
     dl: _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="3" x2="12" y2="15"/>', 13),
     ul: _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/>', 13),
   };
@@ -386,6 +387,113 @@
     return ctx;
   }
 
+  // ---- retry: re-ask ChatGPT for a better answer ----
+
+  function buildRetryPrompt(note, prevAnswer) {
+    return (
+      "You are helping a student annotate study material. The student was NOT " +
+      "satisfied with your previous answer below — it may be unclear, too vague, " +
+      "or inaccurate. Give a BETTER answer: correct, factual, and easy to " +
+      "understand, explained differently from before. Be concise (2-4 sentences), " +
+      "no preamble.\n\n" +
+      "--- HIGHLIGHTED TEXT ---\n" +
+      note.selection.slice(0, 1500) +
+      "\n\n--- QUESTION ---\n" +
+      note.question +
+      "\n\n--- PREVIOUS (REJECTED) ANSWER ---\n" +
+      (prevAnswer || "").slice(0, 2000) +
+      "\n\n--- NOW GIVE AN IMPROVED, ACCURATE, CLEARER ANSWER ---"
+    );
+  }
+
+  function buildRetryFollowupPrompt(note, pathStr, prevAnswer) {
+    const idx = pathStr.split(".").map(Number);
+    const node = getNodeByPath(note, pathStr);
+    // context = last 2 Q&A turns of the ANCESTORS (exclude the node being retried)
+    const turns = [{ q: note.question, a: note.answer || "" }];
+    let nodes = note.followups || [];
+    for (let k = 0; k < idx.length - 1; k++) {
+      const nd = nodes[idx[k]];
+      if (!nd) break;
+      turns.push({ q: nd.q, a: nd.a || "" });
+      nodes = nd.children || [];
+    }
+    const last2 = turns.slice(-2);
+    let ctx =
+      "You are helping a student with a follow-up on their study note. The student " +
+      "was NOT satisfied with your previous answer below — it may be unclear, vague, " +
+      "or inaccurate. Give a BETTER answer: correct and easy to understand, explained " +
+      "differently. Be concise (2-4 sentences), no preamble.\n\n" +
+      "--- ORIGINAL HIGHLIGHT ---\n" +
+      note.selection.slice(0, 1500);
+    last2.forEach((t, i) => {
+      ctx +=
+        `\n\n--- PREVIOUS Q${i + 1} ---\n` +
+        t.q +
+        `\n--- PREVIOUS A${i + 1} ---\n` +
+        (t.a || "").slice(0, 1500);
+    });
+    ctx += "\n\n--- FOLLOW-UP QUESTION ---\n" + (node?.q || "");
+    ctx +=
+      "\n\n--- PREVIOUS (REJECTED) ANSWER ---\n" +
+      (prevAnswer || "").slice(0, 2000);
+    ctx += "\n\n--- NOW GIVE AN IMPROVED, ACCURATE, CLEARER ANSWER ---";
+    return ctx;
+  }
+
+  async function retryNote(convoId, noteId) {
+    const notes = await Store.getNotes(convoId);
+    const n = notes.find((x) => x.id === noteId);
+    if (!n || !n.answer || String(n.answer).startsWith("⏳")) return;
+    const prev = n.answer;
+    await Store.update(convoId, noteId, { answer: "⏳ retrying…" });
+    renderList();
+    const requestId = "r" + Date.now();
+    liveAsks[requestId] = noteId; // stream progress live into .slm-a
+    chrome.runtime
+      .sendMessage({ type: "ASK", requestId, prompt: buildRetryPrompt(n, prev) })
+      .then(async (resp) => {
+        delete liveAsks[requestId];
+        await Store.update(convoId, noteId, {
+          answer: resp?.ok
+            ? resp.answer
+            : "⚠️ Failed: " + (resp?.error || "no response"),
+        });
+        toast(resp?.ok ? "New answer ready ✓" : "Retry failed ⚠️");
+        renderList();
+      });
+  }
+
+  async function retryFollowup(convoId, noteId, pathStr) {
+    const notes = await Store.getNotes(convoId);
+    const n = notes.find((x) => x.id === noteId);
+    const node = n && getNodeByPath(n, pathStr);
+    if (!node || !node.a || String(node.a).startsWith("⏳")) return;
+    const prev = node.a;
+    node.a = "⏳ retrying…";
+    await Store.update(convoId, noteId, { followups: n.followups });
+    renderList();
+    const requestId = "r" + Date.now();
+    chrome.runtime
+      .sendMessage({
+        type: "ASK",
+        requestId,
+        prompt: buildRetryFollowupPrompt(n, pathStr, prev),
+      })
+      .then(async (resp) => {
+        const notes2 = await Store.getNotes(convoId);
+        const n2 = notes2.find((x) => x.id === noteId);
+        const node2 = getNodeByPath(n2, pathStr);
+        if (node2)
+          node2.a = resp?.ok
+            ? resp.answer
+            : "⚠️ Failed: " + (resp?.error || "no response");
+        await Store.update(convoId, noteId, { followups: n2.followups });
+        toast(resp?.ok ? "New answer ready ✓" : "Retry failed ⚠️");
+        renderList();
+      });
+  }
+
   function askAI(note, prompt, streamTarget, followupQ) {
     const requestId = "r" + Date.now() + Math.random().toString(36).slice(2, 6);
     liveAsks[requestId] = note.id;
@@ -568,6 +676,8 @@
         renderList();
         refresh();
       };
+      const retryBtn = card.querySelector(".slm-note-top .slm-retry");
+      if (retryBtn) retryBtn.onclick = () => retryNote(convoId, noteId);
       const jump = card.querySelector(".slm-jump");
       if (jump)
         jump.onclick = async () => {
@@ -632,6 +742,8 @@
       // recursive: a reply button on every follow-up answer, any depth
       card.querySelectorAll(".slm-followup").forEach((fuEl) => {
         const path = fuEl.dataset.path;
+        const rt = fuEl.querySelector(":scope > .slm-fu-line > .slm-retry");
+        if (rt) rt.onclick = () => retryFollowup(convoId, noteId, path);
         const sfu = fuEl.querySelector(":scope > .slm-fu-line > .slm-sfu");
         const box = fuEl.querySelector(":scope > .slm-sfu-box");
         if (!sfu || !box) return;
@@ -706,6 +818,11 @@
         return `
         <div class="slm-followup" data-path="${path}">
           <div class="slm-fu-line"><b>↳ ${esc(f.q)}</b>
+            ${
+              f.a && !String(f.a).startsWith("⏳")
+                ? `<button class="slm-mini slm-retry" title="Retry — get a clearer, more accurate answer">${I.retry}</button>`
+                : ""
+            }
             <button class="slm-mini slm-sfu" title="Ask a follow-up on this answer">${I.reply}</button>
           </div>
           <div>${esc(f.a || "")}</div>
@@ -728,6 +845,11 @@
           <span class="slm-type" style="--chip:${t.color}"><i class="slm-dot"></i>${t.label}</span>
           <span class="slm-note-btns">
             <button class="slm-mini slm-jump" title="Jump to highlight">${I.target}</button>
+            ${
+              n.answer && !String(n.answer).startsWith("⏳")
+                ? `<button class="slm-mini slm-retry" title="Retry — get a clearer, more accurate answer">${I.retry}</button>`
+                : ""
+            }
             <button class="slm-mini slm-fu" title="Ask follow-up">${I.reply}</button>
             <button class="slm-mini slm-del" title="Delete">${I.trash}</button>
           </span>
