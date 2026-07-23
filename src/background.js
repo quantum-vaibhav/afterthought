@@ -1,4 +1,4 @@
-// StudyLM — background service worker
+// AfterThought — background service worker
 // ASK: opens an inactive temporary-chat tab, runs the prompt via the worker
 // content script (#slm-worker), relays streaming progress back, returns answer.
 

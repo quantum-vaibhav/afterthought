@@ -1,4 +1,4 @@
-# AfterThought— Notes for ChatGPT
+# AfterThought
 
 Chrome extension: select any text in a ChatGPT answer, attach a question or note, and optionally get a short AI answer pinned inline — without polluting your main conversation.
 
@@ -16,8 +16,7 @@ Chrome extension: select any text in a ChatGPT answer, attach a question or note
 3. **Save note** — stores it locally, or **Ask AI & save** — opens a hidden temporary ChatGPT chat, asks your question with the selection + full message as context, and streams the answer live into the note
 4. Saved selections stay highlighted in the message (color-coded by type); click a highlight to open its note
 5. The floating **📝** button (right edge) opens the sidebar: search, filter by type, "This chat / All chats" scope, follow-up questions per note, jump-to-highlight
-6. **🎓 Review** runs spaced-repetition flashcards over your notes (Again / Good / Easy)
-7. Export from the sidebar footer: **Markdown**, **Anki** (tab-separated, import with "Fields separated by: Tab"), **JSON backup** + import
+6. Export from the sidebar footer: **Markdown**, **Anki** (tab-separated, import with "Fields separated by: Tab"), **JSON backup** + import
 
 Notes are stored per-conversation in `chrome.storage.local`. Theme follows ChatGPT's light/dark mode.
 

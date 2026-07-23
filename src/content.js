@@ -1,11 +1,11 @@
-// StudyLM — content script
+// AfterThought — content script
 // Normal tabs: notes UI. Worker tabs (#slm-worker): automation only.
 
 (function () {
   "use strict";
-  const A = window.StudyLMAdapter;
-  const Store = window.StudyLMStore;
-  const HL = window.StudyLMHighlights;
+  const A = window.AfterThoughtAdapter;
+  const Store = window.AfterThoughtStore;
+  const HL = window.AfterThoughtHighlights;
   if (!A) return;
 
   /* ================= worker mode ================= */
@@ -25,7 +25,7 @@
 
     async function runAsk(prompt, requestId) {
       const report = (text) => {
-        console.log("[StudyLM worker]", text.slice(0, 80));
+        console.log("[AfterThought worker]", text.slice(0, 80));
         chrome.runtime
           .sendMessage({ type: "ASK_PROGRESS", requestId, text })
           .catch(() => {});
@@ -116,7 +116,6 @@
   let floatBtn = null;
   let popupEl = null;
   let sidebarEl = null;
-  let quizEl = null;
   let pendingSel = null; // {text, messageId, fullText}
   const liveAsks = {}; // requestId -> noteId
 
@@ -200,7 +199,7 @@
   }
 
   document.addEventListener("mouseup", (e) => {
-    if (e.target.closest(".slm-popup, .slm-float, .slm-sidebar, .slm-quiz, .slm-fab"))
+    if (e.target.closest(".slm-popup, .slm-float, .slm-sidebar, .slm-fab"))
       return;
     setTimeout(() => {
       hideFloat();
@@ -223,8 +222,6 @@
     } else if (e.key === "Escape") {
       closePopup();
       hideFloat();
-      quizEl?.remove();
-      quizEl = null;
     }
   });
 
@@ -233,7 +230,7 @@
     // ignore clicks on our own UI (these have their own handlers)
     if (
       e.target.closest(
-        ".slm-popup, .slm-sidebar, .slm-quiz, .slm-fab, .slm-float, .slm-toasts, .slm-badge"
+        ".slm-popup, .slm-sidebar, .slm-fab, .slm-float, .slm-toasts, .slm-badge"
       )
     )
       return;
@@ -249,7 +246,7 @@
   function showFloat(rect) {
     floatBtn = el("button", "slm-float");
     floatBtn.innerHTML = I.note + "<span>Add note</span>";
-    floatBtn.title = "Add StudyLM note (Alt+N)";
+    floatBtn.title = "Add AfterThought note (Alt+N)";
     floatBtn.style.top = window.scrollY + rect.bottom + 8 + "px";
     floatBtn.style.left =
       window.scrollX + Math.min(rect.left, window.innerWidth - 130) + "px";
@@ -587,7 +584,6 @@
       answer,
       type: type || "general",
       followups: [],
-      srs: { reps: 0, intervalDays: 0, due: null },
       createdAt: new Date().toISOString(),
     };
     try {
@@ -607,7 +603,7 @@
     if (!fab) {
       fab = el("button", "slm-fab");
       fab.innerHTML = I.note;
-      fab.title = "StudyLM notes";
+      fab.title = "AfterThought notes";
       fab.onclick = () => (sidebarEl ? closeSidebar() : openSidebar());
       document.body.appendChild(fab);
     }
@@ -622,8 +618,7 @@
     sidebarEl = el("div", "slm-sidebar slm-slide-in");
     sidebarEl.innerHTML = `
       <div class="slm-sb-head">
-        <span class="slm-brand">${I.note}<b>StudyLM</b></span>
-        <button class="slm-btn slm-review">${I.grad}<span>Review</span></button>
+        <span class="slm-brand">${I.note}<b>AfterThought</b></span>
         <button class="slm-x" title="Close">${I.close}</button>
       </div>
       <div class="slm-sb-tools">
@@ -648,7 +643,6 @@
     document.body.appendChild(sidebarEl);
 
     sidebarEl.querySelector(".slm-x").onclick = closeSidebar;
-    sidebarEl.querySelector(".slm-review").onclick = openQuiz;
     sidebarEl.querySelector(".slm-search").oninput = (e) => {
       sbState.q = e.target.value;
       renderList();
@@ -927,11 +921,11 @@
     const all = await Store.getAll();
     const scope = sbState.scope === "chat" ? cid() : null;
     if (kind === "md")
-      Store.download("studylm-notes.md", Store.exportMarkdown(all, scope), "text/markdown");
+      Store.download("afterthought-notes.md", Store.exportMarkdown(all, scope), "text/markdown");
     else if (kind === "anki")
-      Store.download("studylm-anki.txt", Store.exportAnki(all, scope));
+      Store.download("afterthought-anki.txt", Store.exportAnki(all, scope));
     else if (kind === "json")
-      Store.download("studylm-backup.json", Store.exportJSON(all), "application/json");
+      Store.download("afterthought-backup.json", Store.exportJSON(all), "application/json");
     else if (kind === "import") {
       const file = sidebarEl.querySelector(".slm-file");
       file.onchange = async () => {
@@ -945,76 +939,6 @@
         }
       };
       file.click();
-    }
-  }
-
-  /* ---------- quiz / review mode ---------- */
-
-  async function openQuiz() {
-    quizEl?.remove();
-    const all = await Store.getAll();
-    const scope = sbState.scope === "chat" ? [cid()] : Object.keys(all);
-    let cards = [];
-    for (const c of scope) {
-      for (const n of (all[c]?.notes || [])) cards.push({ n, c });
-    }
-    const due = cards.filter(({ n }) => Store.dueNotes([n]).length);
-    if (due.length) cards = due;
-    cards = cards.filter(({ n }) => n.answer);
-    if (!cards.length) return toast("No answered notes to review yet");
-    cards.sort(() => Math.random() - 0.5);
-
-    let i = 0;
-    quizEl = el("div", "slm-quiz slm-pop-in");
-    document.body.appendChild(quizEl);
-    show();
-
-    function show() {
-      const { n } = cards[i];
-      const t = TYPES[n.type] || TYPES.general;
-      quizEl.innerHTML = `
-        <div class="slm-quiz-card" style="--note-color:${t.color}">
-          <div class="slm-progress"><i style="width:${Math.round((i / cards.length) * 100)}%"></i></div>
-          <div class="slm-quiz-head">
-            <span class="slm-brand">${I.grad}<b>Review</b></span>
-            <span class="slm-hint">${i + 1} / ${cards.length}</span>
-            <button class="slm-x">${I.close}</button></div>
-          <span class="slm-type" style="--chip:${t.color}"><i class="slm-dot"></i>${t.label}</span>
-          <blockquote class="slm-quote">${esc(smartTrim(n.selection, 220))}</blockquote>
-          <div class="slm-q">${esc(n.question)}</div>
-          <div class="slm-quiz-answer" hidden>${esc(n.answer)}</div>
-          <div class="slm-row slm-quiz-actions">
-            <button class="slm-btn slm-primary slm-reveal">Show answer</button>
-          </div>
-          <div class="slm-row slm-grades" hidden>
-            <button class="slm-btn slm-g slm-g-again" data-g="again">Again</button>
-            <button class="slm-btn slm-g slm-g-good" data-g="good">Good</button>
-            <button class="slm-btn slm-g slm-g-easy" data-g="easy">Easy</button>
-          </div>
-        </div>`;
-      quizEl.querySelector(".slm-x").onclick = () => {
-        quizEl.remove();
-        quizEl = null;
-      };
-      quizEl.querySelector(".slm-reveal").onclick = () => {
-        quizEl.querySelector(".slm-quiz-answer").hidden = false;
-        quizEl.querySelector(".slm-quiz-actions").hidden = true;
-        quizEl.querySelector(".slm-grades").hidden = false;
-      };
-      quizEl.querySelectorAll(".slm-g").forEach((b) => {
-        b.onclick = async () => {
-          const { n, c } = cards[i];
-          Store.grade(n, b.dataset.g);
-          await Store.update(c, n.id, { srs: n.srs });
-          i++;
-          if (i < cards.length) show();
-          else {
-            toast("Review complete 🎉");
-            quizEl.remove();
-            quizEl = null;
-          }
-        };
-      });
     }
   }
 
