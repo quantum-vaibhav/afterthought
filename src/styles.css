@@ -1,5 +1,5 @@
 /* ============================================================
-   StudyLM — design system
+   AfterThought — design system
    Glass surfaces, SVG line icons, refined typography.
    All classes prefixed .slm- ; themed via CSS variables.
    ============================================================ */
@@ -42,14 +42,14 @@
 
 /* ---------- shared primitives ---------- */
 
-.slm-popup, .slm-sidebar, .slm-quiz-card, .slm-toast, .slm-float, .slm-fab {
+.slm-popup, .slm-sidebar, .slm-toast, .slm-float, .slm-fab {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.01em;
   box-sizing: border-box;
 }
-.slm-popup *, .slm-sidebar *, .slm-quiz-card * { box-sizing: border-box; }
+.slm-popup *, .slm-sidebar * { box-sizing: border-box; }
 
 .slm-brand {
   display: inline-flex; align-items: center; gap: 8px;
@@ -75,11 +75,11 @@ kbd {
 
 /* ---------- persistent highlights ---------- */
 
-::highlight(studylm-general)    { background: rgba(16, 185, 129, 0.25); }
-::highlight(studylm-definition) { background: rgba(96, 165, 250, 0.25); }
-::highlight(studylm-doubt)      { background: rgba(251, 191, 36, 0.28); }
-::highlight(studylm-important)  { background: rgba(248, 113, 113, 0.25); }
-::highlight(studylm-todo)       { background: rgba(167, 139, 250, 0.25); }
+::highlight(afterthought-general)    { background: rgba(16, 185, 129, 0.25); }
+::highlight(afterthought-definition) { background: rgba(96, 165, 250, 0.25); }
+::highlight(afterthought-doubt)      { background: rgba(251, 191, 36, 0.28); }
+::highlight(afterthought-important)  { background: rgba(248, 113, 113, 0.25); }
+::highlight(afterthought-todo)       { background: rgba(167, 139, 250, 0.25); }
 
 .slm-flash { animation: slm-flash 1.6s ease; }
 @keyframes slm-flash {
@@ -261,7 +261,6 @@ kbd {
   padding: 14px 16px; border-bottom: 1px solid var(--slm-border);
 }
 .slm-sb-head .slm-brand { flex: 1; font-size: 14px; }
-.slm-review { padding: 6px 12px; }
 
 .slm-x {
   display: flex; align-items: center; justify-content: center;
@@ -397,63 +396,6 @@ kbd {
   border-top: 1px solid var(--slm-border);
 }
 .slm-sb-foot .slm-btn { flex: 1; font-size: 11.5px; padding: 7px 4px; }
-
-/* ---------- quiz / review ---------- */
-
-.slm-quiz {
-  position: fixed; inset: 0; z-index: 100002;
-  background: rgba(8, 10, 14, 0.6);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  display: flex; align-items: center; justify-content: center;
-}
-.slm-quiz-card {
-  position: relative; overflow: hidden;
-  width: 480px; max-width: calc(100vw - 40px);
-  background: var(--slm-bg); color: var(--slm-fg);
-  backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
-  border: 1px solid var(--slm-border2);
-  border-radius: 18px; padding: 20px;
-  box-shadow: var(--slm-shadow); font-size: 14px;
-  animation: slm-pop 0.24s cubic-bezier(0.21, 1.02, 0.55, 1);
-}
-
-.slm-progress {
-  position: absolute; top: 0; left: 0; right: 0; height: 3px;
-  background: var(--slm-bg3);
-}
-.slm-progress i {
-  display: block; height: 100%;
-  background: var(--slm-accent-grad);
-  border-radius: 0 3px 3px 0;
-  transition: width 0.3s ease;
-}
-
-.slm-quiz-head {
-  display: flex; align-items: center; gap: 10px;
-  margin: 4px 0 14px;
-}
-.slm-quiz-head .slm-brand { flex: 1; }
-
-.slm-quiz-card .slm-q { font-size: 15px; margin: 10px 0; line-height: 1.5; }
-
-.slm-quiz-answer {
-  margin-top: 12px; padding: 12px 14px;
-  background: var(--slm-bg2); border: 1px solid var(--slm-border);
-  border-radius: 12px;
-  white-space: pre-wrap; color: var(--slm-fg2);
-  font-size: 13px; line-height: 1.65;
-  animation: slm-pop 0.2s ease-out;
-}
-
-.slm-quiz-actions { justify-content: center; }
-.slm-grades { justify-content: space-between; gap: 8px; }
-.slm-grades .slm-btn { flex: 1; padding: 9px 0; font-weight: 600; }
-.slm-g-again { color: var(--slm-danger); border-color: color-mix(in srgb, var(--slm-danger) 35%, transparent); }
-.slm-g-again:hover { background: color-mix(in srgb, var(--slm-danger) 12%, transparent); }
-.slm-g-good { color: var(--slm-accent); border-color: color-mix(in srgb, var(--slm-accent) 35%, transparent); }
-.slm-g-good:hover { background: color-mix(in srgb, var(--slm-accent) 12%, transparent); }
-.slm-g-easy { color: var(--slm-info); border-color: color-mix(in srgb, var(--slm-info) 35%, transparent); }
-.slm-g-easy:hover { background: color-mix(in srgb, var(--slm-info) 12%, transparent); }
 
 /* ---------- toasts ---------- */
 

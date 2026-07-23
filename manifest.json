@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "StudyLM - Notes for ChatGPT",
+  "name": "AfterThought",
   "version": "0.1.0",
   "description": "Select text in a ChatGPT answer, attach a question or note, and get a short AI answer pinned inline. Study notes for LLM chats.",
   "permissions": ["storage", "tabs"],

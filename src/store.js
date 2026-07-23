@@ -1,13 +1,14 @@
-// StudyLM — storage layer (v2)
+// AfterThought — storage layer (v2)
 // Shape: { [convoId]: { title, notes: [Note] } }
-// Note: { id, messageId, selection, question, answer, type, followups:[{q,a,at}],
-//         srs:{reps,intervalDays,due}, createdAt }
+// Note: { id, messageId, selection, occurrence, question, answer, type,
+//         followups:[{q,a,at,children}], createdAt }
 
 (function () {
   "use strict";
 
-  const KEY = "studylm_notes_v2";
-  const LEGACY_KEY = "studylm_notes";
+  const KEY = "afterthought_notes_v2";
+  const OLD_V2_KEY = "studylm_notes_v2"; // pre-rename key → migrate to KEY
+  const LEGACY_KEY = "studylm_notes"; // v1 shape → migrate to KEY
 
   const TYPES = {
     general: { label: "General", icon: "📝", color: "#10a37f" },
@@ -22,7 +23,6 @@
       {
         type: "general",
         followups: [],
-        srs: { reps: 0, intervalDays: 0, due: null },
         answer: null,
       },
       n
@@ -30,8 +30,14 @@
   }
 
   async function loadAll() {
-    const r = await chrome.storage.local.get([KEY, LEGACY_KEY]);
+    const r = await chrome.storage.local.get([KEY, OLD_V2_KEY, LEGACY_KEY]);
     let data = r[KEY] || null;
+    // migrate pre-rename v2 data (studylm_notes_v2 -> afterthought_notes_v2)
+    if (!data && r[OLD_V2_KEY]) {
+      data = r[OLD_V2_KEY];
+      await chrome.storage.local.set({ [KEY]: data });
+      await chrome.storage.local.remove(OLD_V2_KEY);
+    }
     // migrate v1 ({cid: Note[]}) -> v2
     if (!data && r[LEGACY_KEY]) {
       data = {};
@@ -62,7 +68,7 @@
     return run;
   }
 
-  window.StudyLMStore = {
+  window.AfterThoughtStore = {
     TYPES,
 
     async getAll() {
@@ -112,39 +118,10 @@
       });
     },
 
-    // ---- spaced repetition (SM-2 lite) ----
-
-    dueNotes(notes) {
-      const now = Date.now();
-      return notes.filter(
-        (n) => n.answer && (!n.srs.due || n.srs.due <= now)
-      );
-    },
-
-    grade(note, g) {
-      // g: 'again' | 'good' | 'easy'
-      const s = note.srs;
-      if (g === "again") {
-        s.reps = 0;
-        s.intervalDays = 0;
-        s.due = Date.now() + 10 * 60 * 1000; // 10 min
-      } else {
-        s.reps++;
-        const mult = g === "easy" ? 3.5 : 2.5;
-        s.intervalDays = s.intervalDays
-          ? Math.round(s.intervalDays * mult)
-          : g === "easy"
-          ? 3
-          : 1;
-        s.due = Date.now() + s.intervalDays * 86400000;
-      }
-      return s;
-    },
-
     // ---- export / import ----
 
     exportMarkdown(all, onlyCid) {
-      let md = "# StudyLM notes\n";
+      let md = "# AfterThought notes\n";
       for (const [cid, convo] of Object.entries(all)) {
         if (onlyCid && cid !== onlyCid) continue;
         md += `\n## ${convo.title || cid}\n`;

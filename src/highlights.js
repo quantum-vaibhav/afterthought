@@ -1,4 +1,4 @@
-// StudyLM — persistent highlights via the CSS Custom Highlight API (Chrome 105+)
+// AfterThought — persistent highlights via the CSS Custom Highlight API (Chrome 105+)
 // Re-paints saved selections inside messages; clicking a highlight opens its note.
 
 (function () {
@@ -11,7 +11,7 @@
   function registryFor(type) {
     if (!registries[type]) {
       registries[type] = new Highlight();
-      CSS.highlights.set("studylm-" + type, registries[type]);
+      CSS.highlights.set("afterthought-" + type, registries[type]);
     }
     return registries[type];
   }
@@ -80,7 +80,7 @@
     return range;
   }
 
-  window.StudyLMHighlights = {
+  window.AfterThoughtHighlights = {
     supported,
 
     // notes: [{note, messageEl}]

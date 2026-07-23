@@ -1,4 +1,4 @@
-// StudyLM — ChatGPT adapter
+// AfterThought — ChatGPT adapter
 // ALL site-specific DOM knowledge lives in this file. If ChatGPT changes its
 // markup, fix it here. Adding Gemini/Claude later = write a new adapter with
 // the same interface and load it for that host in manifest.json.
@@ -47,7 +47,7 @@
     return [];
   }
 
-  window.StudyLMAdapter = {
+  window.AfterThoughtAdapter = {
     provider: "chatgpt",
 
     newChatUrl: "https://chatgpt.com/?temporary-chat=true",
