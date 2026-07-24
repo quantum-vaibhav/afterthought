@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AfterThought",
-  "version": "0.1.0",
+  "version": "0.3.2",
   "description": "Select text in a ChatGPT answer, attach a question or note, and get a short AI answer pinned inline. Study notes for LLM chats.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [
@@ -12,6 +12,12 @@
     "service_worker": "src/background.js"
   },
   "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["src/worker-visibility.js", "src/worker-net.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       "js": [

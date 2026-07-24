@@ -41,6 +41,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 async function askInWorkerTab(prompt, requestId) {
   const tab = await chrome.tabs.create({ url: WORKER_URL, active: false });
+  // Stop the browser from auto-discarding this background tab under memory
+  // pressure (many open tabs). Freezing is further blocked by a Web Lock the
+  // worker holds — see keepWorkerAwake() in content.js.
+  chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   try {
     return await withTimeout(
       (async () => {
@@ -49,14 +53,41 @@ async function askInWorkerTab(prompt, requestId) {
         const ping = await sendWithRetry(tab.id, { type: "SLM_PING" }, 20, 1000);
         if (!ping?.pong)
           throw new Error("worker content script never became ready");
-        const resp = await chrome.tabs.sendMessage(tab.id, {
+        const start = await chrome.tabs.sendMessage(tab.id, {
           type: "RUN_ASK",
           prompt,
           requestId,
         });
-        if (!resp) throw new Error("worker tab never responded");
-        if (!resp.ok) throw new Error(resp.error);
-        return resp.answer;
+        if (!start?.started) throw new Error("worker did not start the ask");
+        console.log("[AfterThought bg v0.2.0] ask started, polling every 2s…");
+        let polls = 0;
+
+        // Poll the worker every 2s. The worker tab's own timers are throttled
+        // while it's in the background (which used to leave finished answers
+        // stranded until the tab was focused), but extension message delivery
+        // is NOT throttled — each SLM_CHECK inspects the DOM immediately.
+        for (;;) {
+          await delay(2000);
+          let st = null;
+          try {
+            st = await chrome.tabs.sendMessage(tab.id, { type: "SLM_CHECK" });
+          } catch (_) {
+            console.log("[AfterThought bg] worker tab not responding (asleep?)");
+            continue; // tab busy/navigating/frozen — try again next tick
+          }
+          if (!st) continue;
+          polls++;
+          console.log(
+            `[AfterThought bg] poll #${polls}: done=${!!st.done} text=${(st.text || st.answer || "").slice(0, 40)}`
+          );
+          if (st.samples && st.samples.length)
+            console.log("[AfterThought bg] stream sample:", st.samples);
+          if (st.text) relayProgress(requestId, st.text);
+          if (st.done) {
+            if (st.error) throw new Error(st.error);
+            return st.answer;
+          }
+        }
       })(),
       OVERALL_TIMEOUT_MS,
       "overall ask timed out"
@@ -64,6 +95,19 @@ async function askInWorkerTab(prompt, requestId) {
   } finally {
     chrome.tabs.remove(tab.id).catch(() => {});
   }
+}
+
+function relayProgress(requestId, text) {
+  lastProgress.set(requestId, text);
+  const target = askSources.get(requestId);
+  if (target != null)
+    chrome.tabs
+      .sendMessage(target, { type: "ASK_PROGRESS", requestId, text })
+      .catch(() => {});
+}
+
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function waitForTabComplete(tabId, timeout) {
