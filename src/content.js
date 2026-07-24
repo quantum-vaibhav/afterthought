@@ -11,71 +11,172 @@
   /* ================= worker mode ================= */
 
   if (location.hash.includes("slm-worker")) {
+    // Background tabs get their timers heavily throttled, so this tab must NOT
+    // be the one deciding "the answer is finished" on its own clock — that's
+    // what froze answers until the tab was focused. Instead, RUN_ASK only
+    // STARTS the ask and records state; the background service worker polls
+    // SLM_CHECK every 2s (message delivery is not throttled), and each check
+    // inspects the DOM right then and returns done/answer.
+    console.log("[AfterThought worker v0.3.0] net-capture build ready");
+    keepWorkerAwake();
+    let ask = null; // {phase, sentAt, baseline, sawGenerating, prevText, stable, done, answer, error}
+
+    // Keep this hidden tab from being frozen/suspended by the browser while it
+    // works. Holding a Web Lock makes the tab ineligible for freezing. (No audio
+    // keep-alive — the browser blocks it without a click and it's not needed.)
+    function keepWorkerAwake() {
+      try {
+        navigator.locks &&
+          navigator.locks.request("aftg-worker-awake", () => new Promise(() => {}));
+      } catch (_) {}
+    }
+
+    // The MAIN-world net-capture script (worker-net.js) posts the answer text as
+    // it streams off ChatGPT's network response — no rendering required.
+    window.addEventListener("message", (e) => {
+      if (e.source !== window || !e.data || e.data.__aftg !== 1 || !ask) return;
+      if (typeof e.data.sample === "string") {
+        ask.netSamples = ask.netSamples || [];
+        if (ask.netSamples.length < 3) ask.netSamples.push(e.data.sample);
+      }
+      if (typeof e.data.text === "string") ask.netText = e.data.text;
+      // Only finish when we actually captured answer TEXT. Empty streams (e.g.
+      // page-load conversation requests) must not end the ask.
+      if (e.data.done && ask.netText) ask.netDone = true;
+      if (e.data.error) ask.netError = e.data.error;
+    });
+
     chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
       if (msg.type === "SLM_PING") {
         sendResponse({ pong: true });
         return;
       }
-      if (msg.type !== "RUN_ASK") return;
-      runAsk(msg.prompt, msg.requestId)
-        .then((answer) => sendResponse({ ok: true, answer }))
-        .catch((err) => sendResponse({ ok: false, error: String(err) }));
-      return true;
+      if (msg.type === "RUN_ASK") {
+        ask = {
+          phase: "starting",
+          sentAt: null,
+          baseline: A.getAssistantMessages().length,
+          sawGenerating: false,
+          prevText: "",
+          stable: 0,
+          done: false,
+          answer: null,
+          error: null,
+          netText: "",
+          netDone: false,
+          netError: null,
+        };
+        startAsk(msg.prompt).catch((err) => {
+          if (ask && !ask.done) {
+            ask.done = true;
+            ask.error = String(err);
+          }
+        });
+        sendResponse({ started: true });
+        return;
+      }
+      if (msg.type === "SLM_CHECK") {
+        sendResponse(checkAsk());
+        return;
+      }
     });
 
-    async function runAsk(prompt, requestId) {
-      const report = (text) => {
-        console.log("[AfterThought worker]", text.slice(0, 80));
-        chrome.runtime
-          .sendMessage({ type: "ASK_PROGRESS", requestId, text })
-          .catch(() => {});
-      };
-
-      report("⏳ waiting for composer…");
+    async function startAsk(prompt) {
+      ask.phase = "waiting for composer";
       await waitFor(() => A.getComposer(), 20000, "composer never appeared");
-      await sleep(500);
-
-      report("⏳ typing prompt…");
-      if (!A.setComposerText(prompt)) throw new Error("could not set prompt");
       await sleep(400);
+      ask.phase = "typing prompt";
+      if (!A.setComposerText(prompt)) throw new Error("could not set prompt");
+      await sleep(300);
       const c = A.getComposer();
-      const typed = (c.innerText || c.value || "").trim();
-      if (!typed) throw new Error("composer text did not register");
-
-      report("⏳ sending…");
+      if (!(c.innerText || c.value || "").trim())
+        throw new Error("composer text did not register");
+      ask.phase = "sending";
       if (!A.clickSend()) throw new Error("could not send");
+      ask.phase = "waiting for reply";
+      ask.sentAt = Date.now();
+    }
 
-      report("⏳ waiting for reply…");
-      await waitFor(
-        () => A.isGenerating() || A.getLastAssistantText().length > 0,
-        15000,
-        "generation never started"
-      );
+    // Runs synchronously on every background poll — no timers involved.
+    function checkAsk() {
+      const s = ask;
+      if (!s) return { done: true, error: "no ask in progress" };
+      if (s.done) return { done: true, answer: s.answer, error: s.error };
 
-      // Poll until the reply is really finished. Primary signal: ChatGPT shows
-      // the action bar (copy button) under a completed turn. Fallback: text
-      // unchanged for a full 8s (streaming pauses are shorter than that).
-      let last = "",
-        stable = 0;
-      const t0 = Date.now();
-      while (Date.now() - t0 < 150000) {
-        const now = A.getLastAssistantText();
-        if (now && now === last) stable++;
-        else stable = 0;
-        if (now) {
-          last = now;
-          report(now);
-        }
-        if (
-          last &&
-          ((A.lastTurnComplete() && !A.isGenerating() && stable >= 2) ||
-            stable >= 16)
-        )
-          return last;
-        await sleep(500);
+      // PRIMARY: the answer captured directly from ChatGPT's network stream.
+      // This works even when the background tab hasn't rendered anything.
+      if (s.netDone) {
+        s.done = true;
+        s.answer = stripMarkdown(s.netText);
+        s.error = s.answer ? null : s.netError || "empty answer from stream";
+        return { done: true, answer: s.answer, error: s.error };
       }
-      if (last) return last; // best effort
-      throw new Error("no answer text appeared within 150s");
+
+      if (s.phase !== "waiting for reply")
+        return {
+          done: false,
+          text: stripMarkdown(s.netText) || "⏳ " + s.phase + "…",
+        };
+
+      const newTurn = A.getAssistantMessages().length > s.baseline;
+      const generating = A.isGenerating();
+      if (generating) s.sawGenerating = true;
+      const text = newTurn ? A.getLastAssistantText() : "";
+      if (text && text === s.prevText) s.stable++;
+      else s.stable = 0;
+      s.prevText = text;
+
+      const waited = Date.now() - s.sentAt;
+      // Only bail on "never started" if BOTH the network capture and the DOM
+      // show nothing — the network stream may be flowing without a rendered turn.
+      if (!s.sawGenerating && !newTurn && !s.netText && waited > 20000) {
+        s.done = true;
+        s.error = "generation never started";
+        return { done: true, error: s.error };
+      }
+      if (waited > 180000) {
+        s.done = true;
+        if (text) return ((s.answer = text), { done: true, answer: text });
+        s.error = "no answer within 180s";
+        return { done: true, error: s.error };
+      }
+
+      // Finished: text present, not generating, and either ChatGPT shows the
+      // completed-turn action bar (fast path, ~1 poll) or the text has been
+      // unchanged across 3 polls (~6s fallback).
+      if (
+        text &&
+        !generating &&
+        (A.lastTurnComplete() ? s.stable >= 1 : s.stable >= 3)
+      ) {
+        s.done = true;
+        s.answer = text;
+        return { done: true, answer: text };
+      }
+      return {
+        done: false,
+        text: stripMarkdown(s.netText) || text || "⏳ waiting for reply…",
+        samples: s.netSamples,
+      };
+    }
+
+    // The network stream gives raw markdown; the old page-scraping gave rendered
+    // text. Strip the common markers so notes read naturally like before.
+    function stripMarkdown(s) {
+      return (s || "")
+        .replace(/```([\s\S]*?)```/g, "$1") // code fences → keep content
+        .replace(/`([^`]+)`/g, "$1") // inline code
+        .replace(/\*\*\*([\s\S]+?)\*\*\*/g, "$1") // bold+italic
+        .replace(/\*\*([\s\S]+?)\*\*/g, "$1") // bold
+        .replace(/(^|[^*])\*(?!\s)([^*\n]+?)\*/g, "$1$2") // italic *
+        .replace(/__([\s\S]+?)__/g, "$1")
+        .replace(/~~([\s\S]+?)~~/g, "$1")
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // links → text
+        .replace(/^\s{0,3}#{1,6}\s+/gm, "") // headings
+        .replace(/^\s{0,3}>\s?/gm, "") // blockquotes
+        .replace(/^\s{0,3}[-*+]\s+/gm, "• ") // list bullets
+        .replace(/^\s{0,3}-{3,}\s*$/gm, "") // horizontal rules
+        .trim();
     }
 
     function sleep(ms) {
